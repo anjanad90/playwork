@@ -983,6 +983,59 @@ PANEL = "#171208"
 FIELD = "#0d0a06"
 CHROMA = "#010203"
 
+MONITOR_DEFAULTTONEAREST = 2
+_user32 = ctypes.WinDLL("user32")
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _RECT),
+                ("rcWork", _RECT), ("dwFlags", ctypes.c_ulong)]
+
+
+try:
+    # A monitor handle is pointer-sized; the default int return would lop the
+    # top half off on 64-bit and hand back a handle that is not one.
+    _user32.MonitorFromPoint.argtypes = [_POINT, ctypes.c_ulong]
+    _user32.MonitorFromPoint.restype = ctypes.c_void_p
+    _user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p,
+                                        ctypes.POINTER(_MONITORINFO)]
+    _user32.GetMonitorInfoW.restype = ctypes.c_bool
+except AttributeError:
+    pass
+
+
+def work_area_at(x, y):
+    """Work area (x, y, width, height) of the monitor nearest a point.
+
+    The virtual screen is only a bounding box round every monitor, so an
+    L-shaped or diagonal arrangement leaves holes inside it that no monitor
+    covers. Asking Windows for the nearest monitor always lands on a real
+    one, and its work area keeps clear of the taskbar as well.
+    """
+    try:
+        mon = _user32.MonitorFromPoint(_POINT(int(x), int(y)),
+                                       MONITOR_DEFAULTTONEAREST)
+        if not mon:
+            return None
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if not _user32.GetMonitorInfoW(mon, ctypes.byref(info)):
+            return None
+        area = info.rcWork
+        return (area.left, area.top,
+                area.right - area.left, area.bottom - area.top)
+    except Exception:
+        return None
+
 
 class Overlay(tk.Tk):
     def __init__(self, app):
@@ -1155,7 +1208,9 @@ class Overlay(tk.Tk):
     def clamp(self, x, y):
         """Keep the overlay on a monitor that actually exists. Saved positions
         go stale when monitors are added, removed or rearranged."""
-        box = self.virtual_screen()
+        box = work_area_at(int(x) + self.W // 2, int(y) + self.H // 2)
+        if not box:
+            box = self.virtual_screen()
         if not box:
             return int(x), int(y)
         vx, vy, vw, vh = box
