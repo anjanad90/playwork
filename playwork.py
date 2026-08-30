@@ -53,7 +53,7 @@ except ImportError:
 # config
 # ==========================================================================
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 APP_DIR = os.path.dirname(os.path.abspath(
     sys.executable if getattr(sys, "frozen", False) else __file__))
@@ -86,7 +86,7 @@ def _migrate_old_files():
 _migrate_old_files()
 
 DEFAULTS = {
-    "watched_games": ["VintageStory.exe"],
+    "watched_games": [],
     "play_minutes": 45,
     "work_minutes": 60,
     "warn_minutes": 5,
@@ -173,8 +173,8 @@ def load_config():
     raw.pop("recent_targets", None)
 
     cfg.update(raw)
-    if not cfg.get("watched_games"):
-        cfg["watched_games"] = list(DEFAULTS["watched_games"])
+    if not isinstance(cfg.get("watched_games"), list):
+        cfg["watched_games"] = []
     return cfg
 
 
@@ -1042,7 +1042,12 @@ class Overlay(tk.Tk):
         self.menu = tk.Menu(self, tearoff=0)
         self.build_menu()
         self.after(60, self._no_focus_steal)
-        self.place_at(*app.cfg.get("fallback_position", [40, 40]))
+        saved = app.cfg.get("fallback_position", [40, 40])
+        fixed = self.clamp(*saved)
+        if list(fixed) != list(saved):
+            app.cfg["fallback_position"] = list(fixed)
+            save_config(app.cfg)
+        self.place_at(*fixed)
 
     def build_menu(self):
         app = self.app
@@ -1138,8 +1143,42 @@ class Overlay(tk.Tk):
         finally:
             self.menu.grab_release()
 
+    @staticmethod
+    def virtual_screen():
+        """Bounds of the whole desktop across every monitor."""
+        try:
+            gsm = ctypes.windll.user32.GetSystemMetrics
+            return gsm(76), gsm(77), gsm(78), gsm(79)   # x, y, width, height
+        except Exception:
+            return None
+
+    def clamp(self, x, y):
+        """Keep the overlay on a monitor that actually exists. Saved positions
+        go stale when monitors are added, removed or rearranged."""
+        box = self.virtual_screen()
+        if not box:
+            return int(x), int(y)
+        vx, vy, vw, vh = box
+        if vw <= 0 or vh <= 0:
+            return int(x), int(y)
+        x = min(max(int(x), vx), vx + max(0, vw - self.W))
+        y = min(max(int(y), vy), vy + max(0, vh - self.H))
+        return x, y
+
     def place_at(self, x, y):
-        self.geometry("+%d+%d" % (int(x), int(y)))
+        x, y = self.clamp(x, y)
+        self.geometry("+%d+%d" % (x, y))
+
+    def reset_position(self):
+        """Put it back somewhere obvious on the primary monitor."""
+        box = self.virtual_screen()
+        x, y = (40, 40)
+        if box:
+            x, y = box[0] + 40, box[1] + 40
+        self.app.cfg["fallback_position"] = [x, y]
+        self.app.cfg["overlay_offset"] = [-(self.W - 26), 14]
+        save_config(self.app.cfg)
+        self.place_at(x, y)
 
     def paint(self, mood, phase_text, clock_text, note, grown=0):
         accent, bg = PALETTE[mood]
@@ -1875,11 +1914,10 @@ class Settings(tk.Toplevel):
                         continue
                     existing.add(day)
                     added += 1
-                    writer.writerow([day, "10:00", "warmup", 10,
-                                     "VintageStory.exe"])
+                    sample = (self.games[0] if self.games else "Game.exe")
+                    writer.writerow([day, "10:00", "warmup", 10, sample])
                     writer.writerow([day, "12:00", "play",
-                                     random.choice([25, 40, 55, 70]),
-                                     "VintageStory.exe"])
+                                     random.choice([25, 40, 55, 70]), sample])
                     writer.writerow([day, "14:00", "work",
                                      random.choice([20, 45, 60, 85, 110]), ""])
         except Exception:
@@ -2069,6 +2107,9 @@ class Settings(tk.Toplevel):
         tk.Label(parent, bg=PANEL, fg=DIM, font=("Segoe UI", 8),
                  text="Slide it and the overlay updates as you go."
                  ).pack(anchor="w")
+
+        self._btn(parent, "Reset overlay position",
+                  self.app.ui.reset_position).pack(anchor="w", pady=(2, 6))
 
         self._flag(parent, "Show flowers on the overlay", "show_flowers")
         self._flag(parent, "Keep the overlay pinned to the game window",
@@ -2297,9 +2338,6 @@ class Settings(tk.Toplevel):
 
     def apply(self, quiet=False):
         cfg = self.app.cfg
-        if not self.games:
-            self.status.configure(text="Add at least one game.", fg="#b04a2c")
-            return
         cfg["watched_games"] = list(self.games)
         cfg["work_apps"] = list(getattr(self, "work_apps", []))
         for key, var in self.vars.items():
@@ -2328,8 +2366,13 @@ class Settings(tk.Toplevel):
         except Exception:
             pass
         if not quiet:
-            self.status.configure(text="Saved.", fg="#63917c")
-            self.after(2500, lambda: self.status.configure(text=""))
+            if self.games:
+                self.status.configure(text="Saved.", fg="#63917c")
+            else:
+                self.status.configure(
+                    text="Saved - but add a game or the timer won't start.",
+                    fg="#c89b4a")
+            self.after(4000, lambda: self.status.configure(text=""))
 
     def close(self):
         self.app.settings_win = None
@@ -3081,9 +3124,14 @@ class App:
 
         if self.standby:
             watching = self.cfg.get("watched_games", [])
-            note = ("Watching %d games" % len(watching) if len(watching) > 1
-                    else "Waiting for %s" % (watching[0] if watching else "?"))
-            self.ui.paint("standby", "STANDBY", "--:--", note,
+            if not watching:
+                note = "No games set yet - right-click and open Settings"
+            elif len(watching) > 1:
+                note = "Watching %d games" % len(watching)
+            else:
+                note = "Waiting for %s" % watching[0]
+            label = "SET UP" if not watching else "STANDBY"
+            self.ui.paint("standby", label, "--:--", note,
                           int(self.roll_day().get("work", 0) // 360))
             self.reposition()
             self.ui.after(400, self.tick)

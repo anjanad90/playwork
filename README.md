@@ -1,4 +1,4 @@
-# PlayWork 1.0.0
+# PlayWork
 
 Alternating play/work timer for Windows. Runs at login, waits quietly, and
 starts itself when a game on its watch list launches. Pins a countdown to that
@@ -13,11 +13,18 @@ closes or freezes the game for the work block.
 2. Put `playwork.py` and `PlayWork.bat` in a folder you'll keep.
 3. Double-click **PlayWork.bat**. First run installs `psutil` and `pywin32`,
    then opens Settings automatically.
-4. Add your games, set your block lengths, and tick **Start with Windows**
-   on the Startup tab.
+4. On the **Games** tab, add the games you want watched. Start the game first
+   and use *Add running...* — it lists open programs with the biggest window
+   at the top, and a live readout confirms the process is detected. Watch the
+   game's own executable, not a launcher like Steam.
+5. Set your block lengths on **Timing**, then tick **Start with Windows** on
+   the **Startup** tab.
+
+Nothing is preset, so until you add a game the overlay reads **SET UP** and
+the timer stays idle.
 
 Settings and history live in `%APPDATA%\PlayWork`, not the program folder, so
-they survive updates and never end up in OneDrive.
+they survive updates and never end up in a synced folder.
 
 ### Required game setting
 
@@ -104,3 +111,9 @@ for the field.
 | `playwork.ico`, `version.txt` | Icon and version metadata for the build |
 | `%APPDATA%\PlayWork\playwork.json` | Settings |
 | `%APPDATA%\PlayWork\playwork-log.csv` | Every finished block |
+
+---
+
+## License
+
+MIT - see `LICENSE`.
