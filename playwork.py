@@ -2550,6 +2550,9 @@ class App:
         return self.ends_at - time.time()
 
     def remember_position(self, x, y):
+        # A fast drag runs ahead of the window, so store where the overlay
+        # actually ended up rather than where the pointer went.
+        x, y = self.ui.clamp(x, y)
         rect = self.watcher.rect() if self.cfg.get("follow_window") else None
         if rect:
             self.cfg["overlay_offset"] = [int(x - rect[2]), int(y - rect[1])]
