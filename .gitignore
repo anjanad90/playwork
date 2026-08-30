@@ -24,3 +24,6 @@ desktop.ini
 
 backup/
 files.zip
+
+# Claude Code personal overrides (project settings.json is committed)
+.claude/settings.local.json
