@@ -983,6 +983,59 @@ PANEL = "#171208"
 FIELD = "#0d0a06"
 CHROMA = "#010203"
 
+MONITOR_DEFAULTTONEAREST = 2
+_user32 = ctypes.WinDLL("user32")
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _RECT),
+                ("rcWork", _RECT), ("dwFlags", ctypes.c_ulong)]
+
+
+try:
+    # A monitor handle is pointer-sized; the default int return would lop the
+    # top half off on 64-bit and hand back a handle that is not one.
+    _user32.MonitorFromPoint.argtypes = [_POINT, ctypes.c_ulong]
+    _user32.MonitorFromPoint.restype = ctypes.c_void_p
+    _user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p,
+                                        ctypes.POINTER(_MONITORINFO)]
+    _user32.GetMonitorInfoW.restype = ctypes.c_bool
+except AttributeError:
+    pass
+
+
+def work_area_at(x, y):
+    """Work area (x, y, width, height) of the monitor nearest a point.
+
+    The virtual screen is only a bounding box round every monitor, so an
+    L-shaped or diagonal arrangement leaves holes inside it that no monitor
+    covers. Asking Windows for the nearest monitor always lands on a real
+    one, and its work area keeps clear of the taskbar as well.
+    """
+    try:
+        mon = _user32.MonitorFromPoint(_POINT(int(x), int(y)),
+                                       MONITOR_DEFAULTTONEAREST)
+        if not mon:
+            return None
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if not _user32.GetMonitorInfoW(mon, ctypes.byref(info)):
+            return None
+        area = info.rcWork
+        return (area.left, area.top,
+                area.right - area.left, area.bottom - area.top)
+    except Exception:
+        return None
+
 
 class Overlay(tk.Tk):
     def __init__(self, app):
@@ -1042,6 +1095,7 @@ class Overlay(tk.Tk):
         self.menu = tk.Menu(self, tearoff=0)
         self.build_menu()
         self.after(60, self._no_focus_steal)
+        self._last_box = self.virtual_screen()
         saved = app.cfg.get("fallback_position", [40, 40])
         fixed = self.clamp(*saved)
         if list(fixed) != list(saved):
@@ -1155,7 +1209,9 @@ class Overlay(tk.Tk):
     def clamp(self, x, y):
         """Keep the overlay on a monitor that actually exists. Saved positions
         go stale when monitors are added, removed or rearranged."""
-        box = self.virtual_screen()
+        box = work_area_at(int(x) + self.W // 2, int(y) + self.H // 2)
+        if not box:
+            box = self.virtual_screen()
         if not box:
             return int(x), int(y)
         vx, vy, vw, vh = box
@@ -1164,6 +1220,15 @@ class Overlay(tk.Tk):
         x = min(max(int(x), vx), vx + max(0, vw - self.W))
         y = min(max(int(y), vy), vy + max(0, vh - self.H))
         return x, y
+
+    def recheck_monitors(self):
+        """Monitors come and go while the timer runs - a laptop undocked, a
+        projector unplugged. Without this the overlay only gets pulled back
+        on to a screen at startup, so it can vanish mid-block."""
+        box = self.virtual_screen()
+        if box != self._last_box:
+            self._last_box = box
+            self.place_at(self.winfo_x(), self.winfo_y())
 
     def place_at(self, x, y):
         x, y = self.clamp(x, y)
@@ -2485,6 +2550,9 @@ class App:
         return self.ends_at - time.time()
 
     def remember_position(self, x, y):
+        # A fast drag runs ahead of the window, so store where the overlay
+        # actually ended up rather than where the pointer went.
+        x, y = self.ui.clamp(x, y)
         rect = self.watcher.rect() if self.cfg.get("follow_window") else None
         if rect:
             self.cfg["overlay_offset"] = [int(x - rect[2]), int(y - rect[1])]
@@ -3232,6 +3300,7 @@ class App:
         self.ui.after(250, self.tick)
 
     def reposition(self):
+        self.ui.recheck_monitors()
         if not self.cfg.get("follow_window", True):
             return
         rect = self.watcher.rect()
