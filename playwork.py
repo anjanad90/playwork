@@ -1095,6 +1095,7 @@ class Overlay(tk.Tk):
         self.menu = tk.Menu(self, tearoff=0)
         self.build_menu()
         self.after(60, self._no_focus_steal)
+        self._last_box = self.virtual_screen()
         saved = app.cfg.get("fallback_position", [40, 40])
         fixed = self.clamp(*saved)
         if list(fixed) != list(saved):
@@ -1219,6 +1220,15 @@ class Overlay(tk.Tk):
         x = min(max(int(x), vx), vx + max(0, vw - self.W))
         y = min(max(int(y), vy), vy + max(0, vh - self.H))
         return x, y
+
+    def recheck_monitors(self):
+        """Monitors come and go while the timer runs - a laptop undocked, a
+        projector unplugged. Without this the overlay only gets pulled back
+        on to a screen at startup, so it can vanish mid-block."""
+        box = self.virtual_screen()
+        if box != self._last_box:
+            self._last_box = box
+            self.place_at(self.winfo_x(), self.winfo_y())
 
     def place_at(self, x, y):
         x, y = self.clamp(x, y)
@@ -3287,6 +3297,7 @@ class App:
         self.ui.after(250, self.tick)
 
     def reposition(self):
+        self.ui.recheck_monitors()
         if not self.cfg.get("follow_window", True):
             return
         rect = self.watcher.rect()
