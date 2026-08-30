@@ -1,0 +1,26 @@
+# Build output
+release/
+dist/
+build/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PlayWork runtime data (lives in %APPDATA%, but catch strays)
+playwork.json
+playwork-log.csv
+*.moved
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+backup/
+files.zip
